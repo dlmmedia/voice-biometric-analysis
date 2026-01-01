@@ -27,8 +27,8 @@ COPY storage/ storage/
 # Create storage directories
 RUN mkdir -p storage/audio storage/reports storage/temp
 
-# Expose port
+# Expose port (Railway sets PORT dynamically)
 EXPOSE 8000
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application with Railway's PORT env variable
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
