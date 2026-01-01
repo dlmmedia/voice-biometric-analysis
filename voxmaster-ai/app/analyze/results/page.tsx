@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { TimbreRadarChart } from "@/components/charts/timbre-radar-chart";
@@ -25,7 +26,36 @@ import {
 } from "@tabler/icons-react";
 import Link from "next/link";
 
+// Loading fallback for Suspense
+function ResultsLoading() {
+  return (
+    <DashboardLayout title="Analysis Results" description="Loading...">
+      <div className="space-y-6">
+        <Card>
+          <CardContent className="py-4">
+            <Skeleton className="h-12 w-full" />
+          </CardContent>
+        </Card>
+        <div className="grid gap-6 lg:grid-cols-3">
+          <Skeleton className="h-[400px]" />
+          <Skeleton className="h-[400px]" />
+          <Skeleton className="h-[400px]" />
+        </div>
+      </div>
+    </DashboardLayout>
+  );
+}
+
+// Main page wrapper with Suspense
 export default function AnalysisResultsPage() {
+  return (
+    <Suspense fallback={<ResultsLoading />}>
+      <AnalysisResultsContent />
+    </Suspense>
+  );
+}
+
+function AnalysisResultsContent() {
   const searchParams = useSearchParams();
   const analysisId = searchParams.get("id");
   
