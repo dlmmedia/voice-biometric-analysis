@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -24,6 +26,8 @@ import {
 } from "@/components/ui/accordion";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
+import { toast } from "sonner";
+import { useGeneration, useApp } from "@/lib/context/app-context";
 import {
   IconMicrophone,
   IconPlayerPlay,
@@ -32,7 +36,11 @@ import {
   IconWand,
   IconVolume,
   IconSettings,
+  IconLoader2,
+  IconAlertCircle,
+  IconPlayerPause,
 } from "@tabler/icons-react";
+import Link from "next/link";
 
 // Voice types as defined in PRD
 const voiceTypes = [
@@ -90,6 +98,9 @@ const perceptualProfiles = [
 ];
 
 export default function GeneratePage() {
+  const { isBackendConnected } = useApp();
+  const { voiceSignatures, generateVoice } = useGeneration();
+  
   const [selectedVoice, setSelectedVoice] = React.useState<string>("");
   const [selectedVoiceType, setSelectedVoiceType] = React.useState<string>("storyteller");
   const [selectedProfile, setSelectedProfile] = React.useState<string>("podcast");
@@ -97,6 +108,15 @@ export default function GeneratePage() {
   const [textPrompt, setTextPrompt] = React.useState("");
   const [isGenerating, setIsGenerating] = React.useState(false);
   const [generationProgress, setGenerationProgress] = React.useState(0);
+  const [generatedAudio, setGeneratedAudio] = React.useState<{
+    url: string | null;
+    base64: string | null;
+    duration: number;
+    verificationScores: any;
+  } | null>(null);
+  const [isPlaying, setIsPlaying] = React.useState(false);
+  
+  const audioRef = React.useRef<HTMLAudioElement | null>(null);
 
   // Layer controls
   const [pitchVariance, setPitchVariance] = React.useState([50]);
@@ -108,25 +128,102 @@ export default function GeneratePage() {
       prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
     );
   };
+  
+  // Set default voice when signatures load
+  React.useEffect(() => {
+    if (voiceSignatures.length > 0 && !selectedVoice) {
+      setSelectedVoice(voiceSignatures[0].id);
+    }
+  }, [voiceSignatures, selectedVoice]);
 
   const handleGenerate = async () => {
-    if (!textPrompt || !selectedVoice) return;
+    if (!textPrompt) {
+      toast.error("Please enter text to generate");
+      return;
+    }
+    
+    if (!selectedVoice) {
+      toast.error("Please select a voice signature");
+      return;
+    }
+    
+    if (!isBackendConnected) {
+      toast.error("Backend not connected. Please start the backend server.");
+      return;
+    }
     
     setIsGenerating(true);
     setGenerationProgress(0);
+    setGeneratedAudio(null);
 
-    // Simulate generation progress
+    // Progress animation
     const interval = setInterval(() => {
-      setGenerationProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsGenerating(false);
-          return 100;
-        }
-        return prev + 10;
+      setGenerationProgress((prev) => Math.min(prev + 5, 90));
+    }, 200);
+    
+    try {
+      const result = await generateVoice({
+        text: textPrompt,
+        signatureId: selectedVoice,
+        voiceType: selectedVoiceType,
+        inflections: activeInflections,
+        perceptualProfile: selectedProfile,
+        pitchVariance: pitchVariance[0],
+        speakingRate: speakingRate[0],
+        expressiveness: expressiveness[0],
       });
-    }, 500);
+      
+      clearInterval(interval);
+      setGenerationProgress(100);
+      
+      setGeneratedAudio({
+        url: result.audio_url,
+        base64: result.audio_base64,
+        duration: result.duration_seconds,
+        verificationScores: result.verification_scores,
+      });
+      
+      toast.success("Voice generated successfully!");
+      
+    } catch (error) {
+      clearInterval(interval);
+      toast.error(error instanceof Error ? error.message : "Generation failed");
+    } finally {
+      setIsGenerating(false);
+    }
   };
+  
+  const handlePlayPause = () => {
+    if (!generatedAudio?.base64) return;
+    
+    if (!audioRef.current) {
+      audioRef.current = new Audio(`data:audio/mpeg;base64,${generatedAudio.base64}`);
+      audioRef.current.onended = () => setIsPlaying(false);
+    }
+    
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play().catch((e) => {
+        console.error("Playback failed:", e);
+        toast.error("Failed to play audio");
+      });
+    }
+    setIsPlaying(!isPlaying);
+  };
+  
+  const handleDownload = () => {
+    if (!generatedAudio?.base64) return;
+    
+    const link = document.createElement("a");
+    link.href = `data:audio/mpeg;base64,${generatedAudio.base64}`;
+    link.download = `voxmaster_generated_${Date.now()}.mp3`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success("Audio downloaded!");
+  };
+
 
   const selectedTypeDetails = voiceTypes.find((t) => t.id === selectedVoiceType);
 
@@ -150,16 +247,31 @@ export default function GeneratePage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Select value={selectedVoice} onValueChange={setSelectedVoice}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a voice signature" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="primary">Primary Voice (92% quality)</SelectItem>
-                  <SelectItem value="secondary">Secondary Voice (78% quality)</SelectItem>
-                  <SelectItem value="new">+ Enroll New Voice</SelectItem>
-                </SelectContent>
-              </Select>
+              {voiceSignatures.length === 0 ? (
+                <Alert>
+                  <IconAlertCircle className="size-4" />
+                  <AlertTitle>No Voice Signatures</AlertTitle>
+                  <AlertDescription>
+                    You need to enroll a voice signature first.{" "}
+                    <Link href="/biometrics" className="underline font-medium">
+                      Go to Voice Biometrics
+                    </Link>
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <Select value={selectedVoice} onValueChange={setSelectedVoice}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a voice signature" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {voiceSignatures.map((sig: any) => (
+                      <SelectItem key={sig.id} value={sig.id}>
+                        {sig.name} ({Math.round(sig.quality_score || 0)}% quality)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </CardContent>
           </Card>
 
@@ -424,28 +536,76 @@ export default function GeneratePage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {generationProgress === 100 ? (
+              {generatedAudio ? (
                 <div className="space-y-4">
-                  <div className="p-4 bg-muted/50 flex items-center gap-4">
-                    <Button size="icon" variant="outline">
-                      <IconPlayerPlay className="size-4" />
+                  <div className="p-4 bg-muted/50 rounded-lg flex items-center gap-4">
+                    <Button size="icon" variant="outline" onClick={handlePlayPause}>
+                      {isPlaying ? (
+                        <IconPlayerPause className="size-4" />
+                      ) : (
+                        <IconPlayerPlay className="size-4" />
+                      )}
                     </Button>
                     <div className="flex-1">
-                      <div className="h-8 bg-primary/20 flex items-center px-2">
-                        <div className="w-1/3 h-1 bg-primary" />
+                      <div className="h-8 bg-primary/20 rounded flex items-center px-2">
+                        <div className="w-full h-1 bg-primary/30 relative">
+                          <div 
+                            className="absolute inset-y-0 left-0 bg-primary transition-all" 
+                            style={{ width: isPlaying ? '100%' : '0%' }}
+                          />
+                        </div>
                       </div>
                     </div>
-                    <span className="text-sm text-muted-foreground">0:00 / 0:12</span>
+                    <span className="text-sm text-muted-foreground">
+                      {generatedAudio.duration.toFixed(1)}s
+                    </span>
                   </div>
+                  
+                  {/* Verification Scores */}
+                  {generatedAudio.verificationScores && (
+                    <div className="space-y-2 text-sm">
+                      <p className="font-medium">Verification Scores</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="text-center p-2 bg-muted/50 rounded">
+                          <p className="text-lg font-bold text-primary">
+                            {generatedAudio.verificationScores.identity_match?.toFixed(1)}%
+                          </p>
+                          <p className="text-xs text-muted-foreground">Identity</p>
+                        </div>
+                        <div className="text-center p-2 bg-muted/50 rounded">
+                          <p className="text-lg font-bold text-primary">
+                            {generatedAudio.verificationScores.voice_type_accuracy?.toFixed(1)}%
+                          </p>
+                          <p className="text-xs text-muted-foreground">Voice Type</p>
+                        </div>
+                        <div className="text-center p-2 bg-muted/50 rounded">
+                          <p className="text-lg font-bold text-primary">
+                            {generatedAudio.verificationScores.perceptual_match?.toFixed(1)}%
+                          </p>
+                          <p className="text-xs text-muted-foreground">Perceptual</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
                   <div className="flex gap-2">
-                    <Button className="flex-1">
+                    <Button className="flex-1" onClick={handleDownload}>
                       <IconDownload className="mr-2 size-4" />
                       Download
                     </Button>
-                    <Button variant="outline">
+                    <Button variant="outline" onClick={() => {
+                      setGeneratedAudio(null);
+                      audioRef.current = null;
+                      setIsPlaying(false);
+                    }}>
                       <IconRefresh className="size-4" />
                     </Button>
                   </div>
+                </div>
+              ) : isGenerating ? (
+                <div className="text-center py-8">
+                  <IconLoader2 className="size-8 mx-auto mb-2 animate-spin text-primary" />
+                  <p className="text-sm text-muted-foreground">Generating audio...</p>
                 </div>
               ) : (
                 <div className="text-center py-8 text-muted-foreground">

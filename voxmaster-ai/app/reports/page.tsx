@@ -5,6 +5,7 @@ import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -20,6 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Select,
@@ -29,6 +31,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
+import { useReports, useAnalysis, useApp } from "@/lib/context/app-context";
 import {
   IconFileAnalytics,
   IconDownload,
@@ -38,41 +43,114 @@ import {
   IconBraces,
   IconTable,
   IconCalendar,
+  IconLoader2,
 } from "@tabler/icons-react";
 
-// Mock reports data
-const reports = [
-  {
-    id: "1",
-    filename: "voice_analysis_report.pdf",
-    audioFile: "sample_voice.wav",
-    type: "analysis" as const,
-    sweetSpotScore: 76.3,
-    createdAt: "2024-01-15 14:30",
-    size: "1.2 MB",
-  },
-  {
-    id: "2",
-    filename: "biometric_enrollment.pdf",
-    audioFile: "enrollment_samples",
-    type: "biometric" as const,
-    sweetSpotScore: null,
-    createdAt: "2024-01-14 10:15",
-    size: "0.8 MB",
-  },
-  {
-    id: "3",
-    filename: "batch_analysis_01.pdf",
-    audioFile: "10 files",
-    type: "batch" as const,
-    sweetSpotScore: 72.1,
-    createdAt: "2024-01-12 16:45",
-    size: "4.5 MB",
-  },
-];
-
 export default function ReportsPage() {
+  const { isBackendConnected, apiUrl } = useApp();
+  const { listReports, downloadReport, deleteReport, createReport } = useReports();
+  const { listAnalyses } = useAnalysis();
+  
+  const [reports, setReports] = React.useState<any[]>([]);
+  const [analyses, setAnalyses] = React.useState<any[]>([]);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [selectedAnalysis, setSelectedAnalysis] = React.useState<string>("");
   const [exportFormat, setExportFormat] = React.useState("pdf");
+  const [isCreatingReport, setIsCreatingReport] = React.useState(false);
+  const [isDialogOpen, setIsDialogOpen] = React.useState(false);
+  
+  // Load reports and analyses on mount
+  React.useEffect(() => {
+    const loadData = async () => {
+      if (!isBackendConnected) {
+        setIsLoading(false);
+        return;
+      }
+      
+      try {
+        const [reportsList, analysesList] = await Promise.all([
+          listReports(),
+          listAnalyses(50),
+        ]);
+        setReports(reportsList || []);
+        setAnalyses(analysesList || []);
+      } catch (error) {
+        console.error("Failed to load data:", error);
+      }
+      setIsLoading(false);
+    };
+    
+    loadData();
+  }, [isBackendConnected, listReports, listAnalyses]);
+  
+  // Create new report
+  const handleCreateReport = async () => {
+    if (!selectedAnalysis) {
+      toast.error("Please select an analysis");
+      return;
+    }
+    
+    setIsCreatingReport(true);
+    try {
+      await createReport(selectedAnalysis, exportFormat);
+      toast.success("Report generated successfully!");
+      
+      // Refresh reports list
+      const reportsList = await listReports();
+      setReports(reportsList || []);
+      
+      setIsDialogOpen(false);
+      setSelectedAnalysis("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to create report");
+    } finally {
+      setIsCreatingReport(false);
+    }
+  };
+  
+  // Download report
+  const handleDownload = async (report: any) => {
+    try {
+      const blob = await downloadReport(report.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = report.filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success("Report downloaded!");
+    } catch (error) {
+      toast.error("Failed to download report");
+    }
+  };
+  
+  // Delete report
+  const handleDelete = async (reportId: string) => {
+    try {
+      await deleteReport(reportId);
+      toast.success("Report deleted");
+      
+      // Refresh reports list
+      const reportsList = await listReports();
+      setReports(reportsList || []);
+    } catch (error) {
+      toast.error("Failed to delete report");
+    }
+  };
+  
+  // Format file size
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+  
+  // Format date
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleString();
+  };
 
   return (
     <DashboardLayout
@@ -88,7 +166,7 @@ export default function ReportsPage() {
             <TabsTrigger value="batch">Batch</TabsTrigger>
           </TabsList>
 
-          <Dialog>
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button>
                 <IconFileAnalytics className="mr-2 size-4" />
@@ -104,20 +182,28 @@ export default function ReportsPage() {
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Select Analysis</label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose an analysis" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">sample_voice.wav - Jan 15</SelectItem>
-                      <SelectItem value="2">recording_02.mp3 - Jan 14</SelectItem>
-                      <SelectItem value="3">singing_sample.wav - Jan 12</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label>Select Analysis</Label>
+                  {analyses.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      No analyses available. Run an analysis first.
+                    </p>
+                  ) : (
+                    <Select value={selectedAnalysis} onValueChange={setSelectedAnalysis}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose an analysis" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {analyses.map((analysis: any) => (
+                          <SelectItem key={analysis.id} value={analysis.id}>
+                            {analysis.filename} - {formatDate(analysis.created_at)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Export Format</label>
+                  <Label>Export Format</Label>
                   <div className="grid grid-cols-3 gap-2">
                     <Button
                       variant={exportFormat === "pdf" ? "default" : "outline"}
@@ -145,8 +231,23 @@ export default function ReportsPage() {
                     </Button>
                   </div>
                 </div>
-                <Button className="w-full">Generate Report</Button>
               </div>
+              <DialogFooter>
+                <Button 
+                  className="w-full" 
+                  onClick={handleCreateReport}
+                  disabled={isCreatingReport || !selectedAnalysis}
+                >
+                  {isCreatingReport ? (
+                    <>
+                      <IconLoader2 className="mr-2 size-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    "Generate Report"
+                  )}
+                </Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
         </div>
@@ -160,65 +261,88 @@ export default function ReportsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Report</TableHead>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Score</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Size</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {reports.map((report) => (
-                    <TableRow key={report.id}>
-                      <TableCell className="font-medium">
-                        <div className="flex items-center gap-2">
-                          <IconPdf className="size-4 text-red-500" />
-                          {report.filename}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {report.audioFile}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="capitalize">
-                          {report.type}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {report.sweetSpotScore ? (
-                          <span className="font-medium">{report.sweetSpotScore}</span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {report.createdAt}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {report.size}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button variant="ghost" size="icon">
-                            <IconEye className="size-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon">
-                            <IconDownload className="size-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon">
-                            <IconTrash className="size-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+              {isLoading ? (
+                <div className="space-y-4">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} className="h-16 w-full" />
                   ))}
-                </TableBody>
-              </Table>
+                </div>
+              ) : reports.length === 0 ? (
+                <div className="text-center py-12">
+                  <IconFileAnalytics className="size-12 mx-auto mb-4 text-muted-foreground" />
+                  <h3 className="text-lg font-semibold mb-2">No Reports Yet</h3>
+                  <p className="text-muted-foreground mb-4">
+                    Generate your first report from an analysis.
+                  </p>
+                  <Button onClick={() => setIsDialogOpen(true)}>
+                    <IconFileAnalytics className="mr-2 size-4" />
+                    New Report
+                  </Button>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Report</TableHead>
+                      <TableHead>Source</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead>Size</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {reports.map((report: any) => (
+                      <TableRow key={report.id}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            {report.filename?.endsWith('.pdf') ? (
+                              <IconPdf className="size-4 text-red-500" />
+                            ) : report.filename?.endsWith('.json') ? (
+                              <IconBraces className="size-4 text-blue-500" />
+                            ) : (
+                              <IconTable className="size-4 text-green-500" />
+                            )}
+                            {report.filename}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {report.audio_file || "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="capitalize">
+                            {report.report_type || "analysis"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {formatDate(report.created_at)}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {formatSize(report.size_bytes || 0)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button 
+                              variant="ghost" 
+                              size="icon"
+                              onClick={() => handleDownload(report)}
+                            >
+                              <IconDownload className="size-4" />
+                            </Button>
+                            <Button 
+                              variant="ghost" 
+                              size="icon"
+                              onClick={() => handleDelete(report.id)}
+                            >
+                              <IconTrash className="size-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

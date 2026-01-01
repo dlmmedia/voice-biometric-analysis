@@ -2,21 +2,23 @@
 Analysis Router - Vocal Technique Analysis Endpoints
 """
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import JSONResponse
-from typing import Optional
+from typing import Optional, List
 import tempfile
 import os
 
 from app.services.preprocessing import preprocess_audio
 from app.services.feature_extraction import extract_features
 from app.services.scoring import calculate_scores
+from app.services.database import db
+from app.services.storage import storage
 from app.models.schemas import AnalysisRequest, AnalysisResponse, AudioType
 
 router = APIRouter()
 
 
-@router.post("/", response_model=AnalysisResponse)
+@router.post("/")
 async def analyze_audio(
     file: UploadFile = File(...),
     audio_type: str = Form("spoken"),
@@ -38,19 +40,28 @@ async def analyze_audio(
     """
     
     # Validate file type
-    allowed_types = ["audio/wav", "audio/mpeg", "audio/mp3", "audio/m4a", "audio/x-wav"]
-    if file.content_type not in allowed_types:
+    allowed_types = ["audio/wav", "audio/mpeg", "audio/mp3", "audio/m4a", "audio/x-wav", "audio/x-m4a"]
+    if file.content_type and file.content_type not in allowed_types:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type. Allowed: {allowed_types}"
+            detail=f"Invalid file type. Allowed: WAV, MP3, M4A"
         )
     
     try:
-        # Save uploaded file temporarily
+        # Read file content
+        content = await file.read()
+        
+        # Save uploaded file temporarily for processing
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-            content = await file.read()
             tmp.write(content)
             tmp_path = tmp.name
+        
+        # Upload to storage
+        audio_url = None
+        try:
+            _, audio_url = await storage.upload_audio(content, file.filename or "audio.wav")
+        except Exception as storage_error:
+            print(f"Warning: Could not upload to storage: {storage_error}")
         
         # Process audio
         audio_type_enum = AudioType.SUNG if audio_type == "sung" else AudioType.SPOKEN
@@ -67,22 +78,141 @@ async def analyze_audio(
         # Cleanup temp file
         os.unlink(tmp_path)
         
-        return AnalysisResponse(
-            filename=file.filename,
+        # Convert features to dict for storage
+        features_dict = {
+            "spectral_centroid": features.spectral_centroid,
+            "spectral_rolloff": features.spectral_rolloff,
+            "hnr": features.hnr,
+            "cpp": features.cpp,
+            "h1_h2": features.h1_h2,
+            "f0_mean": features.f0_mean,
+            "f0_range": features.f0_range,
+            "formants": features.formants,
+            "mfccs": features.mfccs,
+            "jitter": features.jitter,
+            "shimmer": features.shimmer,
+        }
+        
+        # Convert scores to dicts
+        timbre_dict = {
+            "brightness": scores["timbre"].brightness,
+            "breathiness": scores["timbre"].breathiness,
+            "warmth": scores["timbre"].warmth,
+            "roughness": scores["timbre"].roughness,
+        }
+        weight_dict = {
+            "weight": scores["weight"].weight,
+            "pressed": scores["weight"].pressed,
+        }
+        placement_dict = {
+            "forwardness": scores["placement"].forwardness,
+            "ring_index": scores["placement"].ring_index,
+            "nasality": scores["placement"].nasality,
+        }
+        sweet_spot_dict = {
+            "clarity": scores["sweet_spot"].clarity,
+            "warmth": scores["sweet_spot"].warmth,
+            "presence": scores["sweet_spot"].presence,
+            "smoothness": scores["sweet_spot"].smoothness,
+            "harshness_penalty": scores["sweet_spot"].harshness_penalty,
+            "total": scores["sweet_spot"].total,
+        }
+        
+        # Save to database
+        analysis = await db.create_analysis(
+            filename=file.filename or "audio.wav",
+            audio_url=audio_url,
             audio_type=audio_type,
             prompt_type=prompt_type,
-            timbre=scores["timbre"],
-            weight=scores["weight"],
-            placement=scores["placement"],
-            sweet_spot=scores["sweet_spot"],
-            features=features,
+            timbre=timbre_dict,
+            weight=weight_dict,
+            placement=placement_dict,
+            sweet_spot=sweet_spot_dict,
+            features=features_dict,
         )
+        
+        return {
+            "id": str(analysis['id']),
+            "filename": analysis['filename'],
+            "audio_url": analysis['audio_url'],
+            "audio_type": analysis['audio_type'],
+            "prompt_type": analysis['prompt_type'],
+            "timbre": analysis['timbre'],
+            "weight": analysis['weight'],
+            "placement": analysis['placement'],
+            "sweet_spot": analysis['sweet_spot'],
+            "features": analysis['features'],
+            "analyzed_at": analysis['created_at'].isoformat(),
+        }
         
     except Exception as e:
         # Cleanup on error
         if 'tmp_path' in locals() and os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/")
+async def list_analyses(
+    limit: int = Query(20, ge=1, le=100),
+):
+    """List recent analyses."""
+    analyses = await db.list_analyses(limit=limit)
+    
+    return {
+        "analyses": [
+            {
+                "id": str(a['id']),
+                "filename": a['filename'],
+                "audio_type": a.get('audio_type'),
+                "prompt_type": a.get('prompt_type'),
+                "sweet_spot": a.get('sweet_spot'),
+                "created_at": a['created_at'].isoformat(),
+            }
+            for a in analyses
+        ]
+    }
+
+
+@router.get("/{analysis_id}")
+async def get_analysis(analysis_id: str):
+    """Get a specific analysis by ID."""
+    analysis = await db.get_analysis(analysis_id)
+    
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    
+    return {
+        "id": str(analysis['id']),
+        "filename": analysis['filename'],
+        "audio_url": analysis.get('audio_url'),
+        "audio_type": analysis['audio_type'],
+        "prompt_type": analysis['prompt_type'],
+        "timbre": analysis['timbre'],
+        "weight": analysis['weight'],
+        "placement": analysis['placement'],
+        "sweet_spot": analysis['sweet_spot'],
+        "features": analysis['features'],
+        "analyzed_at": analysis['created_at'].isoformat(),
+    }
+
+
+@router.delete("/{analysis_id}")
+async def delete_analysis(analysis_id: str):
+    """Delete an analysis."""
+    analysis = await db.get_analysis(analysis_id)
+    
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    
+    # Delete audio file from storage
+    if analysis.get('audio_url'):
+        await storage.delete_file(analysis['audio_url'])
+    
+    # Delete from database
+    await db.delete_analysis(analysis_id)
+    
+    return {"deleted": analysis_id, "status": "success"}
 
 
 @router.get("/features")

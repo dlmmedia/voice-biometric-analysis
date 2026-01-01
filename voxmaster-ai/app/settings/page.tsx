@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTheme } from "next-themes";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -23,6 +25,19 @@ import {
   AlertTitle,
 } from "@/components/ui/alert";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
+import { useSettings, useApp, useBiometrics } from "@/lib/context/app-context";
+import {
   IconSettings,
   IconKey,
   IconShield,
@@ -31,9 +46,185 @@ import {
   IconDatabase,
   IconTrash,
   IconAlertTriangle,
+  IconCheck,
+  IconX,
+  IconLoader2,
+  IconDownload,
 } from "@tabler/icons-react";
 
 export default function SettingsPage() {
+  const { theme, setTheme } = useTheme();
+  const { isBackendConnected } = useApp();
+  const { 
+    getSettings, 
+    updateSettings, 
+    saveApiKey, 
+    verifyApiKey,
+    deleteAllSignatures,
+    exportData,
+  } = useSettings();
+  const { refreshSignatures } = useBiometrics();
+  
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [settings, setSettings] = React.useState<any>(null);
+  
+  // API Key states
+  const [elevenLabsKey, setElevenLabsKey] = React.useState("");
+  const [openaiKey, setOpenaiKey] = React.useState("");
+  const [isVerifyingElevenlabs, setIsVerifyingElevenlabs] = React.useState(false);
+  const [isVerifyingOpenai, setIsVerifyingOpenai] = React.useState(false);
+  const [elevenlabsVerified, setElevenlabsVerified] = React.useState<boolean | null>(null);
+  const [openaiVerified, setOpenaiVerified] = React.useState<boolean | null>(null);
+  const [isSavingKey, setIsSavingKey] = React.useState(false);
+  const [isExporting, setIsExporting] = React.useState(false);
+  const [isDeletingSignatures, setIsDeletingSignatures] = React.useState(false);
+  
+  // Load settings on mount
+  React.useEffect(() => {
+    const loadSettings = async () => {
+      if (!isBackendConnected) {
+        setIsLoading(false);
+        return;
+      }
+      
+      try {
+        const data = await getSettings();
+        setSettings(data);
+      } catch (error) {
+        console.error("Failed to load settings:", error);
+      }
+      setIsLoading(false);
+    };
+    
+    loadSettings();
+  }, [isBackendConnected, getSettings]);
+  
+  // Update setting handler
+  const handleUpdateSetting = async (key: string, value: any) => {
+    try {
+      const updated = await updateSettings({ [key]: value });
+      setSettings(updated);
+      toast.success("Settings updated");
+    } catch (error) {
+      toast.error("Failed to update settings");
+    }
+  };
+  
+  // Verify API key
+  const handleVerifyKey = async (keyType: "elevenlabs" | "openai") => {
+    const key = keyType === "elevenlabs" ? elevenLabsKey : openaiKey;
+    if (!key) {
+      toast.error("Please enter an API key");
+      return;
+    }
+    
+    if (keyType === "elevenlabs") {
+      setIsVerifyingElevenlabs(true);
+      setElevenlabsVerified(null);
+    } else {
+      setIsVerifyingOpenai(true);
+      setOpenaiVerified(null);
+    }
+    
+    try {
+      const result = await verifyApiKey(keyType, key);
+      if (result.valid) {
+        if (keyType === "elevenlabs") {
+          setElevenlabsVerified(true);
+        } else {
+          setOpenaiVerified(true);
+        }
+        toast.success(`${keyType === "elevenlabs" ? "ElevenLabs" : "OpenAI"} API key is valid!`);
+      } else {
+        if (keyType === "elevenlabs") {
+          setElevenlabsVerified(false);
+        } else {
+          setOpenaiVerified(false);
+        }
+        toast.error(result.error || "Invalid API key");
+      }
+    } catch (error) {
+      if (keyType === "elevenlabs") {
+        setElevenlabsVerified(false);
+      } else {
+        setOpenaiVerified(false);
+      }
+      toast.error("Verification failed");
+    } finally {
+      if (keyType === "elevenlabs") {
+        setIsVerifyingElevenlabs(false);
+      } else {
+        setIsVerifyingOpenai(false);
+      }
+    }
+  };
+  
+  // Save API key
+  const handleSaveKey = async (keyType: "elevenlabs" | "openai") => {
+    const key = keyType === "elevenlabs" ? elevenLabsKey : openaiKey;
+    if (!key) {
+      toast.error("Please enter an API key");
+      return;
+    }
+    
+    setIsSavingKey(true);
+    try {
+      await saveApiKey(keyType, key);
+      toast.success("API key saved successfully");
+      
+      // Refresh settings
+      const data = await getSettings();
+      setSettings(data);
+      
+      // Clear the input
+      if (keyType === "elevenlabs") {
+        setElevenLabsKey("");
+        setElevenlabsVerified(null);
+      } else {
+        setOpenaiKey("");
+        setOpenaiVerified(null);
+      }
+    } catch (error) {
+      toast.error("Failed to save API key");
+    } finally {
+      setIsSavingKey(false);
+    }
+  };
+  
+  // Export data
+  const handleExportData = async () => {
+    setIsExporting(true);
+    try {
+      const blob = await exportData();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "voxmaster_data_export.json";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success("Data exported successfully");
+    } catch (error) {
+      toast.error("Failed to export data");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+  
+  // Delete all signatures
+  const handleDeleteAllSignatures = async () => {
+    setIsDeletingSignatures(true);
+    try {
+      const result = await deleteAllSignatures();
+      await refreshSignatures();
+      toast.success(`Deleted ${result.deleted_count} voice signatures`);
+    } catch (error) {
+      toast.error("Failed to delete signatures");
+    } finally {
+      setIsDeletingSignatures(false);
+    }
+  };
   return (
     <DashboardLayout
       title="Settings"
@@ -67,7 +258,13 @@ export default function SettingsPage() {
                     Select your preferred color scheme
                   </p>
                 </div>
-                <Select defaultValue="system">
+                <Select 
+                  value={theme} 
+                  onValueChange={(value) => {
+                    setTheme(value);
+                    handleUpdateSetting("theme", value);
+                  }}
+                >
                   <SelectTrigger className="w-[180px]">
                     <SelectValue />
                   </SelectTrigger>
@@ -86,7 +283,10 @@ export default function SettingsPage() {
                     Use a more compact interface layout
                   </p>
                 </div>
-                <Switch />
+                <Switch 
+                  checked={settings?.compact_mode || false}
+                  onCheckedChange={(checked) => handleUpdateSetting("compact_mode", checked)}
+                />
               </div>
             </CardContent>
           </Card>
@@ -109,7 +309,10 @@ export default function SettingsPage() {
                     Default selection for new analyses
                   </p>
                 </div>
-                <Select defaultValue="spoken">
+                <Select 
+                  value={settings?.default_audio_type || "spoken"}
+                  onValueChange={(value) => handleUpdateSetting("default_audio_type", value)}
+                >
                   <SelectTrigger className="w-[180px]">
                     <SelectValue />
                   </SelectTrigger>
@@ -127,7 +330,10 @@ export default function SettingsPage() {
                     Automatically generate PDF after analysis
                   </p>
                 </div>
-                <Switch />
+                <Switch 
+                  checked={settings?.auto_export_reports || false}
+                  onCheckedChange={(checked) => handleUpdateSetting("auto_export_reports", checked)}
+                />
               </div>
             </CardContent>
           </Card>
@@ -147,14 +353,44 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-2">
-                <Label>Eleven Labs API Key</Label>
+                <div className="flex items-center justify-between">
+                  <Label>ElevenLabs API Key</Label>
+                  {settings?.api_keys?.elevenlabs && (
+                    <Badge variant="outline" className="text-green-600">
+                      <IconCheck className="size-3 mr-1" />
+                      Configured
+                    </Badge>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <Input
                     type="password"
-                    placeholder="sk-xxxxxxxxxxxxxxxx"
+                    placeholder="xi-xxxxxxxxxxxxxxxx"
                     className="font-mono"
+                    value={elevenLabsKey}
+                    onChange={(e) => setElevenLabsKey(e.target.value)}
                   />
-                  <Button variant="outline">Verify</Button>
+                  <Button 
+                    variant="outline" 
+                    onClick={() => handleVerifyKey("elevenlabs")}
+                    disabled={isVerifyingElevenlabs || !elevenLabsKey}
+                  >
+                    {isVerifyingElevenlabs ? (
+                      <IconLoader2 className="size-4 animate-spin" />
+                    ) : elevenlabsVerified === true ? (
+                      <IconCheck className="size-4 text-green-600" />
+                    ) : elevenlabsVerified === false ? (
+                      <IconX className="size-4 text-red-600" />
+                    ) : (
+                      "Verify"
+                    )}
+                  </Button>
+                  <Button 
+                    onClick={() => handleSaveKey("elevenlabs")}
+                    disabled={isSavingKey || !elevenLabsKey}
+                  >
+                    Save
+                  </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Required for PersonaFlow voice generation
@@ -162,61 +398,60 @@ export default function SettingsPage() {
               </div>
               <Separator />
               <div className="space-y-2">
-                <Label>OpenAI API Key (Optional)</Label>
+                <div className="flex items-center justify-between">
+                  <Label>OpenAI API Key (Optional)</Label>
+                  {settings?.api_keys?.openai && (
+                    <Badge variant="outline" className="text-green-600">
+                      <IconCheck className="size-3 mr-1" />
+                      Configured
+                    </Badge>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <Input
                     type="password"
                     placeholder="sk-xxxxxxxxxxxxxxxx"
                     className="font-mono"
+                    value={openaiKey}
+                    onChange={(e) => setOpenaiKey(e.target.value)}
                   />
-                  <Button variant="outline">Verify</Button>
+                  <Button 
+                    variant="outline" 
+                    onClick={() => handleVerifyKey("openai")}
+                    disabled={isVerifyingOpenai || !openaiKey}
+                  >
+                    {isVerifyingOpenai ? (
+                      <IconLoader2 className="size-4 animate-spin" />
+                    ) : openaiVerified === true ? (
+                      <IconCheck className="size-4 text-green-600" />
+                    ) : openaiVerified === false ? (
+                      <IconX className="size-4 text-red-600" />
+                    ) : (
+                      "Verify"
+                    )}
+                  </Button>
+                  <Button 
+                    onClick={() => handleSaveKey("openai")}
+                    disabled={isSavingKey || !openaiKey}
+                  >
+                    Save
+                  </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   For enhanced AI-powered analysis features
                 </p>
               </div>
-              <Separator />
-              <div className="space-y-2">
-                <Label>Gemini API Key (Optional)</Label>
-                <div className="flex gap-2">
-                  <Input
-                    type="password"
-                    placeholder="AIzaxxxxxxxxxxxxxxxx"
-                    className="font-mono"
-                  />
-                  <Button variant="outline">Verify</Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Alternative AI provider for analysis
-                </p>
-              </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>API Usage</CardTitle>
-              <CardDescription>
-                Monitor your API consumption
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="p-4 bg-muted/50 text-center">
-                  <p className="text-2xl font-bold">0</p>
-                  <p className="text-sm text-muted-foreground">API Calls Today</p>
-                </div>
-                <div className="p-4 bg-muted/50 text-center">
-                  <p className="text-2xl font-bold">0</p>
-                  <p className="text-sm text-muted-foreground">This Month</p>
-                </div>
-                <div className="p-4 bg-muted/50 text-center">
-                  <p className="text-2xl font-bold">$0.00</p>
-                  <p className="text-sm text-muted-foreground">Estimated Cost</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <Alert>
+            <IconKey className="size-4" />
+            <AlertTitle>Security Note</AlertTitle>
+            <AlertDescription>
+              API keys are encrypted before storage. They are never exposed in logs or responses.
+              Your keys are only used to make requests to the respective services on your behalf.
+            </AlertDescription>
+          </Alert>
         </TabsContent>
 
         {/* Privacy Settings */}
@@ -249,7 +484,13 @@ export default function SettingsPage() {
                     Store raw audio for future analysis
                   </p>
                 </div>
-                <Switch />
+                <Switch 
+                  checked={settings?.privacy?.voice_bank || false}
+                  onCheckedChange={(checked) => handleUpdateSetting("privacy", {
+                    ...settings?.privacy,
+                    voice_bank: checked,
+                  })}
+                />
               </div>
               <Separator />
               <div className="flex items-center justify-between">
@@ -259,7 +500,13 @@ export default function SettingsPage() {
                     Allow voice signature use for generation
                   </p>
                 </div>
-                <Switch defaultChecked />
+                <Switch 
+                  checked={settings?.privacy?.generation_token !== false}
+                  onCheckedChange={(checked) => handleUpdateSetting("privacy", {
+                    ...settings?.privacy,
+                    generation_token: checked,
+                  })}
+                />
               </div>
               <Separator />
               <div className="flex items-center justify-between">
@@ -269,7 +516,13 @@ export default function SettingsPage() {
                     Share anonymized usage data to improve VoxMaster
                   </p>
                 </div>
-                <Switch />
+                <Switch 
+                  checked={settings?.privacy?.analytics || false}
+                  onCheckedChange={(checked) => handleUpdateSetting("privacy", {
+                    ...settings?.privacy,
+                    analytics: checked,
+                  })}
+                />
               </div>
             </CardContent>
           </Card>
@@ -292,9 +545,32 @@ export default function SettingsPage() {
                     Permanently remove all enrolled voice data
                   </p>
                 </div>
-                <Button variant="destructive" size="sm">
-                  Delete All
-                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="destructive" size="sm" disabled={isDeletingSignatures}>
+                      {isDeletingSignatures ? (
+                        <IconLoader2 className="size-4 animate-spin" />
+                      ) : (
+                        "Delete All"
+                      )}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This action cannot be undone. This will permanently delete all
+                        your voice signatures and remove them from our database.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction onClick={handleDeleteAllSignatures}>
+                        Delete All
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
               <Separator />
               <div className="flex items-center justify-between">
@@ -304,7 +580,17 @@ export default function SettingsPage() {
                     Download all your data in a portable format
                   </p>
                 </div>
-                <Button variant="outline" size="sm">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={handleExportData}
+                  disabled={isExporting}
+                >
+                  {isExporting ? (
+                    <IconLoader2 className="mr-2 size-4 animate-spin" />
+                  ) : (
+                    <IconDownload className="mr-2 size-4" />
+                  )}
                   Export
                 </Button>
               </div>
@@ -332,7 +618,13 @@ export default function SettingsPage() {
                     Notify when analysis finishes processing
                   </p>
                 </div>
-                <Switch defaultChecked />
+                <Switch 
+                  checked={settings?.notifications?.analysis_complete !== false}
+                  onCheckedChange={(checked) => handleUpdateSetting("notifications", {
+                    ...settings?.notifications,
+                    analysis_complete: checked,
+                  })}
+                />
               </div>
               <Separator />
               <div className="flex items-center justify-between">
@@ -342,7 +634,13 @@ export default function SettingsPage() {
                     Notify when voice generation is ready
                   </p>
                 </div>
-                <Switch defaultChecked />
+                <Switch 
+                  checked={settings?.notifications?.generation_complete !== false}
+                  onCheckedChange={(checked) => handleUpdateSetting("notifications", {
+                    ...settings?.notifications,
+                    generation_complete: checked,
+                  })}
+                />
               </div>
               <Separator />
               <div className="flex items-center justify-between">
@@ -352,7 +650,13 @@ export default function SettingsPage() {
                     Notify about suspicious verification attempts
                   </p>
                 </div>
-                <Switch defaultChecked />
+                <Switch 
+                  checked={settings?.notifications?.security_alerts !== false}
+                  onCheckedChange={(checked) => handleUpdateSetting("notifications", {
+                    ...settings?.notifications,
+                    security_alerts: checked,
+                  })}
+                />
               </div>
               <Separator />
               <div className="flex items-center justify-between">
@@ -362,7 +666,13 @@ export default function SettingsPage() {
                     Receive updates about new features
                   </p>
                 </div>
-                <Switch />
+                <Switch 
+                  checked={settings?.notifications?.product_updates || false}
+                  onCheckedChange={(checked) => handleUpdateSetting("notifications", {
+                    ...settings?.notifications,
+                    product_updates: checked,
+                  })}
+                />
               </div>
             </CardContent>
           </Card>

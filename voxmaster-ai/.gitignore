@@ -30,8 +30,11 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files (keep .env.example for reference)
+.env
+.env.local
+.env.*.local
+backend/.env
 
 # vercel
 .vercel
@@ -39,3 +42,41 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Storage (local dev only)
+backend/storage/audio/*
+backend/storage/reports/*
+backend/storage/temp/*
+!backend/storage/audio/.gitkeep
+!backend/storage/reports/.gitkeep
+!backend/storage/temp/.gitkeep

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { AudioDropzone } from "@/components/audio/audio-dropzone";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,18 +11,25 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { toast } from "sonner";
+import { useAnalysis, useApp } from "@/lib/context/app-context";
 import {
   IconPlayerPlay,
   IconMicrophone,
   IconMusic,
   IconWaveSine,
   IconLoader2,
+  IconAlertCircle,
 } from "@tabler/icons-react";
 
 type AudioType = "spoken" | "sung";
 type PromptType = "sustained" | "passage" | "verse";
 
 export default function AnalyzePage() {
+  const router = useRouter();
+  const { isBackendConnected } = useApp();
+  const { analyzeAudio } = useAnalysis();
+  
   const [audioFile, setAudioFile] = React.useState<File | null>(null);
   const [audioType, setAudioType] = React.useState<AudioType>("spoken");
   const [promptType, setPromptType] = React.useState<PromptType>("sustained");
@@ -32,12 +40,30 @@ export default function AnalyzePage() {
   };
 
   const handleAnalyze = async () => {
-    if (!audioFile) return;
+    if (!audioFile) {
+      toast.error("Please select an audio file");
+      return;
+    }
+    
+    if (!isBackendConnected) {
+      toast.error("Backend not connected. Please start the backend server.");
+      return;
+    }
     
     setIsAnalyzing(true);
-    // TODO: Connect to backend API
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    setIsAnalyzing(false);
+    
+    try {
+      const result = await analyzeAudio(audioFile, audioType, promptType);
+      toast.success("Analysis complete!");
+      
+      // Navigate to results page with the analysis ID
+      router.push(`/analyze/results?id=${result.id}`);
+    } catch (error) {
+      console.error("Analysis failed:", error);
+      toast.error(error instanceof Error ? error.message : "Analysis failed");
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   return (
