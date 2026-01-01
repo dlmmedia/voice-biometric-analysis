@@ -183,7 +183,9 @@ export interface AcousticFeatures {
 }
 
 export interface AnalysisResponse {
+  id?: string;
   filename: string;
+  audio_url?: string;
   audio_type: string;
   prompt_type: string;
   timbre: TimbreScores;
