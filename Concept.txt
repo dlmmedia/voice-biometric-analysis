@@ -1,0 +1,78 @@
+This Product Requirements Document (PRD) outlines the architecture for VoxMaster AI, a unified vocal intelligence platform. It integrates automated technique analysis, perceptual engineering, biometric security, and generative synthesis into a single full-stack application.
+--------------------------------------------------------------------------------
+PRD: VoxMaster AI – Unified Vocal Intelligence Platform
+1. Executive Summary
+VoxMaster AI is a comprehensive vocal ecosystem designed for creators, performers, and security professionals. It leverages the DLM Theory of Vocal Music and Perceptual Audio Engineering to analyze, generate, and protect the human voice. The system operates as a "Master Architect for Sound," providing high-fidelity analysis of vocal technique while offering a layered generative engine for hyper-realistic voice creation.
+2. Technical Stack
+• Frontend: React/Next.js (deployed on Vercel) with D3.js/Plotly for spectral visualizations.
+• Backend: FastAPI (Python) for high-performance Digital Signal Processing (DSP).
+• Core AI Orchestration: Anthropic Claude 4.5 Opus (via Cursor) for logic and report generation.
+• Synthesis Layer: Eleven Labs API for identity-conditioned voice generation.
+• DSP Libraries: librosa (feature extraction), parselmouth (formants), crepe (F0 tracking).
+• Biometric Engine: ECAPA-TDNN (Open Source via GitHub) for speaker embeddings.
+• Deployment: Vercel (Frontend) and Railway (Python Backend/Microservices).
+--------------------------------------------------------------------------------
+3. Functional Requirements & Architecture
+Phase A: Automated Vocal Analysis Pipeline
+The system must ingest audio and branch processing based on whether the input is Spoken or Sung.
+1. Preprocessing & Separation:
+    ◦ Apply loudness normalization and noise reduction.
+    ◦ Run vocal isolation for singing tracks with accompaniment.
+    ◦ VAD (Voice Activity Detection): Segment audio into voiced/unvoiced regions.
+2. DLM Feature Extraction:
+    ◦ Tone Placement (Resonance): Measure energy in the 2.5–3.5 kHz "Singer’s Formant" and spectral balance.
+    ◦ Vocal Weight (Source Strength): Compute CPP (Cepstral Peak Prominence) and H1–H2 ratios.
+    ◦ Timbre (Spectral Shape): Measure spectral centroid (brightness) and HNR (Harmonics-to-Noise Ratio).
+3. Perceptual Scoring:
+    ◦ Apply ISO 226 equal-loudness weighting to spectral data.
+    ◦ Compute the "Sweet Spot" Score: 0.25×Clarity+0.20×Warmth+0.20×Presence+0.15×Smoothness+0.20×(100−HarshnessPenalty).
+Phase B: Voice Biometrics & Security
+The system creates a "VoiceID Sentinel" to identify and protect vocal identity.
+1. Multi-Faceted Signatures:
+    ◦ Generate a 192-512 dimension embedding vector (Identity Centroid).
+    ◦ Store specialized sub-centroids for Speech and Singing to ensure cross-modal verification.
+2. Liveness & Anti-Spoofing:
+    ◦ Integrate classifiers to detect "replay artifacts" or AI-generated artifacts.
+    ◦ Implement Mode-Identity Consistency: Check if the "Voice Type" (e.g., Whisper) aligns with the user's biometric centroid.
+Phase C: Generative "PersonaFlow" Engine
+Using Eleven Labs and OpenAI/Gemini, the system generates voices using a Layered Control Stack.
+1. Layer 1: Identity: Condition the model with the stored Voice Signature.
+2. Layer 2: Voice Type (Computational Modes): Select from predefined regions: Command, Intimate, Storyteller, Whisper, or Urgent.
+3. Layer 3: Inflections: Overlay temporal patterns like Punch (loudness spike) or Drawl (vowel elongation).
+4. Layer 4: Perceptual Optimization: Iteratively refine the output to minimize the loss between the generated audio and the Target Perceptual Profile (e.g., "Podcast Clarity" vs. "Warm/Intimate").
+--------------------------------------------------------------------------------
+4. Data Architecture & Schema
+Biometric Database Schema
+{
+  "speaker_id": "UUID",
+  "biometric_data": {
+    "identity_centroid": "vector",
+    "speech_centroid": "vector",
+    "singing_centroid": "vector",
+    "embedding_covariance": "float"
+  },
+  "style_descriptors": {
+    "natural_weight": "Light|Medium|Heavy",
+    "timbre_bias": "Bright|Warm|Dark",
+    "vibrato_profile": "JSON_object"
+  },
+  "security": {
+    "consent_scope": ["security", "generation"],
+    "encryption_status": "AES-256",
+    "access_log": "URL_to_log"
+  }
+}
+--------------------------------------------------------------------------------
+5. Implementation Roadmap for Cursor AI
+Task 1: The DSP Engine (Backend)
+• Instruction: "Create a FastAPI endpoint /analyze that uses librosa and parselmouth. Implement the logic to extract H1-H2 ratios for Vocal Weight and Spectral Centroid for Timbre. Ensure it branches logic for is_sung=True to track stable pitch regions vs is_sung=False for prosodic speech."
+Task 2: Perceptual Weighting (Logic)
+• Instruction: "Implement a Python function calculate_perceptual_scores. Apply an A-weighting filter to the FFT. Compute Clarity (1–4 kHz) and Presence (2–5 kHz) energy. Apply a penalty if energy in the 3–6 kHz range exceeds the Harshness threshold."
+Task 3: Generative Orchestration (API)
+• Instruction: "Build a service that takes a text prompt and a 'Voice Type' (e.g., 'Command'). Map the 'Command' type to the parameter ranges: High Weight, Low Pitch Variance, and High Presence. Use Eleven Labs to generate the audio, then run it through the Analysis Pipeline to verify it hits the 'Command' region."
+--------------------------------------------------------------------------------
+6. Privacy & Ethics
+• Raw Audio Policy: Raw audio is processed in memory and deleted immediately after feature extraction unless the user opts into a "Voice Bank".
+• Biometric Compliance: All stored embeddings must be encrypted at rest. Users must provide explicit consent for their voice to be used as a "Generation Identity Token".
+--------------------------------------------------------------------------------
+Analogy for Cursor AI: Think of the system as a Vocal Laboratory. The DSP Engine is the microscope (analysis), the Biometric Centroid is the DNA sequence (identity), and the PersonaFlow Stack is the 3D printer (generation). Your goal is to ensure the DNA remains consistent even when the printer is told to create different "textures" like Whisper or Command.
